@@ -208,6 +208,125 @@ pub trait Format<State: Clone>: Sized {
   fn pick_mode(&self, cursor: Cursor, state: State) -> Self::Mode;
 }
 
+macro_rules! impl_format_delegate {
+  ($T:ident for $Type:ty) => (
+    impl<$T, State: Clone> Format<State> for $Type
+    where $T: Format<State> {
+      type Mode = $T::Mode;
+
+      #[inline]
+      fn format(&self, sink: &mut impl Sink, mode: Self::Mode, state: State) {
+        $T::format(self, sink, mode, state);
+      }
+
+      #[inline]
+      fn format_to_buf(&self, cursor: Cursor, mode: Self::Mode, state: State) -> String {
+        $T::format_to_buf(self, cursor, mode, state)
+      }
+
+      #[inline]
+      fn format_to_preview(&self, cursor: Cursor, mode: Self::Mode, state: State) -> Preview {
+        $T::format_to_preview(self, cursor, mode, state)
+      }
+
+      #[inline]
+      fn format_auto(&self, sink: &mut impl Sink, state: State) {
+        $T::format_auto(self, sink, state);
+      }
+
+      #[inline]
+      fn format_to_buf_auto(&self, cursor: Cursor, state: State) -> String {
+        $T::format_to_buf_auto(self, cursor, state)
+      }
+
+      #[inline]
+      fn format_to_preview_auto(&self, cursor: Cursor, state: State) -> Preview {
+        $T::format_to_preview_auto(self, cursor, state)
+      }
+
+      #[inline]
+      fn pick_mode(&self, cursor: Cursor, state: State) -> Self::Mode {
+        $T::pick_mode(self, cursor, state)
+      }
+    }
+  );
+}
+
+impl_format_delegate!(T for &T);
+impl_format_delegate!(T for &mut T);
+impl_format_delegate!(T for Box<T>);
+impl_format_delegate!(T for std::rc::Rc<T>);
+impl_format_delegate!(T for std::sync::Arc<T>);
+
+
+
+/// A basic formatter implementation that formats a value, delimited by two given delmiter strings on either side.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FormatDelimited<'t, T> {
+  delimiter_start: &'t str,
+  delimiter_end: &'t str,
+  inner: T
+}
+
+impl<'t, T> FormatDelimited<'t, T> {
+  /// Creates a new [`FormatDelimited`].
+  #[inline]
+  pub const fn new(delimiter_start: &'t str, delimiter_end: &'t str, inner: T) -> Self {
+    FormatDelimited { delimiter_start, delimiter_end, inner }
+  }
+}
+
+impl<'t, T, State: Clone> Format<State> for FormatDelimited<'t, T>
+where T: Format<State> {
+  type Mode = ();
+
+  fn format(&self, sink: &mut impl Sink, (): Self::Mode, state: State) {
+    sink.write_str(self.delimiter_start);
+    self.inner.format_auto(sink, state);
+    sink.write_str(self.delimiter_end);
+  }
+
+  fn pick_mode(&self, _: Cursor, _: State) -> Self::Mode {
+    ()
+  }
+}
+
+/// A basic formatter implementation that formats a list of values, separated by a given separator string.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FormatSeparated<'t, T> {
+  separator: &'t str,
+  trailing: bool,
+  inner: T
+}
+
+impl<'t, T> FormatSeparated<'t, T> {
+  /// Creates a new [`FormatSeparated`].
+  #[inline]
+  pub const fn new(separator: &'t str, trailing: bool, inner: T) -> Self {
+    FormatSeparated { separator, trailing, inner }
+  }
+}
+
+impl<'t, T, Item, State: Clone> Format<State> for FormatSeparated<'t, T>
+where for<'i> &'i T: IntoIterator<Item = Item>, Item: Format<State> {
+  type Mode = ();
+
+  fn format(&self, sink: &mut impl Sink, (): Self::Mode, state: State) {
+    for (i, value) in self.inner.into_iter().enumerate() {
+      if i != 0 { sink.write_str(self.separator); };
+      value.format_auto(sink, state.clone());
+    };
+
+    if self.trailing {
+      sink.write_str(self.separator);
+    };
+  }
+
+  fn pick_mode(&self, _: Cursor, _: State) -> Self::Mode {
+    ()
+  }
+}
+
 
 
 #[derive(Debug, Clone)]
