@@ -22,6 +22,8 @@
   unreachable_pub
 )]
 
+pub mod helpers;
+
 use std::fmt;
 
 use crate::sealed::Sealed;
@@ -190,16 +192,19 @@ pub trait Format<State: Clone>: Sized {
   /// Writes the given value into the sink, picking layout modes automatically.
   ///
   /// This function is equivalent to `self.format(sink, self.pick_mode(sink.cursor(), state.clone()), state)`.
+  #[inline]
   fn format_auto(&self, sink: &mut impl Sink, state: State) {
     self.format(sink, self.pick_mode(sink.cursor(), state.clone()), state);
   }
 
   /// Writes the given value into a string buffer, picking layout modes automatically.
+  #[inline]
   fn format_to_buf_auto(&self, cursor: Cursor, state: State) -> String {
     self.format_to_buf(cursor, self.pick_mode(cursor, state.clone()), state)
   }
 
   /// Produces a 'preview' of how the given value will be formatted.
+  #[inline]
   fn format_to_preview_auto(&self, cursor: Cursor, state: State) -> Preview {
     self.format_to_preview(cursor, self.pick_mode(cursor, state.clone()), state)
   }
@@ -257,75 +262,6 @@ impl_format_delegate!(T for &mut T);
 impl_format_delegate!(T for Box<T>);
 impl_format_delegate!(T for std::rc::Rc<T>);
 impl_format_delegate!(T for std::sync::Arc<T>);
-
-
-
-/// A basic formatter implementation that formats a value, delimited by two given delmiter strings on either side.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FormatDelimited<'t, T> {
-  delimiter_start: &'t str,
-  delimiter_end: &'t str,
-  inner: T
-}
-
-impl<'t, T> FormatDelimited<'t, T> {
-  /// Creates a new [`FormatDelimited`].
-  #[inline]
-  pub const fn new(delimiter_start: &'t str, delimiter_end: &'t str, inner: T) -> Self {
-    FormatDelimited { delimiter_start, delimiter_end, inner }
-  }
-}
-
-impl<'t, T, State: Clone> Format<State> for FormatDelimited<'t, T>
-where T: Format<State> {
-  type Mode = ();
-
-  fn format(&self, sink: &mut impl Sink, (): Self::Mode, state: State) {
-    sink.write_str(self.delimiter_start);
-    self.inner.format_auto(sink, state);
-    sink.write_str(self.delimiter_end);
-  }
-
-  fn pick_mode(&self, _: Cursor, _: State) -> Self::Mode {
-    ()
-  }
-}
-
-/// A basic formatter implementation that formats a list of values, separated by a given separator string.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FormatSeparated<'t, T> {
-  separator: &'t str,
-  trailing: bool,
-  inner: T
-}
-
-impl<'t, T> FormatSeparated<'t, T> {
-  /// Creates a new [`FormatSeparated`].
-  #[inline]
-  pub const fn new(separator: &'t str, trailing: bool, inner: T) -> Self {
-    FormatSeparated { separator, trailing, inner }
-  }
-}
-
-impl<'t, T, Item, State: Clone> Format<State> for FormatSeparated<'t, T>
-where for<'i> &'i T: IntoIterator<Item = Item>, Item: Format<State> {
-  type Mode = ();
-
-  fn format(&self, sink: &mut impl Sink, (): Self::Mode, state: State) {
-    for (i, value) in self.inner.into_iter().enumerate() {
-      if i != 0 { sink.write_str(self.separator); };
-      value.format_auto(sink, state.clone());
-    };
-
-    if self.trailing {
-      sink.write_str(self.separator);
-    };
-  }
-
-  fn pick_mode(&self, _: Cursor, _: State) -> Self::Mode {
-    ()
-  }
-}
 
 
 
@@ -387,7 +323,7 @@ impl<P: Plumbing> Sealed for GenericSink<P> {}
 ///
 /// If you need to use a [`Sink`] where only a [`fmt::Write`][std::fmt::Write] are accepted anyways, you can call the
 /// [`Sink::as_fmt_write`] or [`Sink::as_fmt_write_raw`] functions to get an adapter value that does implement [`fmt::Write`][std::fmt::Write].
-pub trait Sink: Sealed {
+pub trait Sink: Sized + Sealed {
   /// Gets the current [`Cursor`].
   fn cursor(&self) -> Cursor;
 
@@ -437,6 +373,12 @@ pub trait Sink: Sealed {
     fmt::Write::write_fmt(self.as_fmt_write_raw(), args).unwrap()
   }
 
+  /// Writes a value implementing [`SinkDisplay`] into the sink.
+  #[inline]
+  fn display(&mut self, displayable: impl SinkDisplay) {
+    displayable.display(self);
+  }
+
   /// Convenience function that increments the indent counter before executing the given function, and decrements it afterwards.
   fn indent(&mut self, f: impl FnOnce(&mut Self)) {
     self.cursor_mut().increment_indent();
@@ -454,6 +396,40 @@ pub trait Sink: Sealed {
   #[inline]
   fn as_fmt_write_raw(&mut self) -> &mut crate::shim::SinkWriteRaw<Self> {
     crate::shim::SinkWriteRaw::wrap(self)
+  }
+}
+
+/// A value that can be written into a [`Sink`] cheaply and without formatting.
+pub trait SinkDisplay: Copy {
+  /// Write this value into the [`Sink`].
+  fn display(self, sink: &mut impl Sink);
+}
+
+impl SinkDisplay for char {
+  #[inline]
+  fn display(self, sink: &mut impl Sink) {
+    sink.write_char(self);
+  }
+}
+
+impl SinkDisplay for &str {
+  #[inline]
+  fn display(self, sink: &mut impl Sink) {
+    sink.write_str(self);
+  }
+}
+
+impl<T> SinkDisplay for &[T] where T: SinkDisplay {
+  fn display(self, sink: &mut impl Sink) {
+    for value in self.iter() {
+      value.display(sink);
+    };
+  }
+}
+
+impl<T> SinkDisplay for &T where T: SinkDisplay {
+  fn display(self, sink: &mut impl Sink) {
+    T::display(self.clone(), sink);
   }
 }
 
