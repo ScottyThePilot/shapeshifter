@@ -1,7 +1,8 @@
-use shapeshifter::{Cursor, Format, Indent, Newline, Sink};
+use shapeshifter::{Cursor, Formattable, Formatter, Indent, Newline};
 
 const SETTINGS: Cursor = Cursor::new(Indent::SPACES2, Newline::LF);
 
+// You can tweak the formatting arguments here to see how they affect the produced output.
 const ARGS: FormatArgs = FormatArgs {
   max_width: 80,
   max_children_inline: 3,
@@ -11,7 +12,7 @@ const ARGS: FormatArgs = FormatArgs {
 };
 
 fn main() {
-  let out = NODE.format_to_buf_auto(SETTINGS, ARGS);
+  let out = NODE.format_to_string_auto(SETTINGS, ARGS);
 
   println!("{}", "-".repeat(ARGS.max_width));
   println!("{out}");
@@ -20,38 +21,34 @@ fn main() {
 
 
 
-impl Format<FormatArgs> for Node {
-  type Mode = NodeLayout;
+impl Formattable<FormatArgs> for Node {
+  type Layout = NodeLayout;
 
-  fn format(&self, sink: &mut impl Sink, mode: NodeLayout, args: FormatArgs) {
+  fn format(&self, sink: &mut (impl Formatter + ?Sized), mode: NodeLayout, args: FormatArgs) {
     sink.write_str(self.name);
     if !self.children.is_empty() {
-      sink.write_str(" {");
-
-      match mode {
-        NodeLayout::Tall => sink.indent(|sink| {
-          sink.write_str("\n");
-          for (node, w) in iter_last(self.children) {
-            node.format_auto(sink, args);
-            if w || args.trailing_commas_in_tall { sink.write_str(",") };
-            sink.write_str("\n");
-          };
-        }),
-        NodeLayout::Compressed => {
-          sink.write_str(" ");
-          for (node, w) in iter_last(self.children) {
-            node.format(sink, NodeLayout::Compressed, args);
-            if w || args.trailing_commas_in_compressed { sink.write_str(",") };
-            sink.write_str(" ");
-          };
-        }
-      };
-
-      sink.write_str("}");
+      sink.delimit(" {", "}", |sink| {
+        match mode {
+          NodeLayout::Tall => sink.indent(|sink| {
+            sink.separate(",", args.trailing_commas_in_tall, self.children, |sink, node| {
+              sink.write_char('\n');
+              node.format_auto(sink, args);
+            });
+            sink.write_char('\n');
+          }),
+          NodeLayout::Compressed => {
+            sink.separate(",", args.trailing_commas_in_tall, self.children, |sink, node| {
+              sink.write_char(' ');
+              node.format_auto(sink, args);
+            });
+            sink.write_char(' ');
+          }
+        };
+      });
     };
   }
 
-  fn pick_mode(&self, cursor: Cursor, args: FormatArgs) -> NodeLayout {
+  fn pick_layout(&self, cursor: Cursor, args: FormatArgs) -> NodeLayout {
     let use_compressed = self.children.len() <= args.max_children_inline &&
       (args.allow_inlined_grandchildren || !self.has_grandchild()) &&
       self.format_to_preview(cursor, NodeLayout::Compressed, args).horizontal_span <= args.max_width;
@@ -161,11 +158,3 @@ const NODE: Node = Node::new("root_node", &[
     Node::new_empty("bash.laudantium")
   ])
 ]);
-
-
-
-fn iter_last<T>(slice: &[T]) -> impl Iterator<Item = (&T, bool)> {
-  slice.iter().rev().enumerate()
-    .map(|(i, value)| (value, i != 0))
-    .rev()
-}
