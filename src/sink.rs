@@ -259,6 +259,62 @@ impl<S: Sink + ?Sized> fmt::Write for SinkWrite<S> {
   }
 }
 
+/// A wrapper type that allows a [`fmt::Write`] to be used like a [`Sink`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct WriteSink<W> {
+  writer: W,
+  err: Option<fmt::Error>
+}
+
+impl<W: fmt::Write> WriteSink<W> {
+  /// Create a new [`WriteSink`] from a [`fmt::Write`].
+  pub const fn new(writer: W) -> Self {
+    WriteSink { writer, err: None }
+  }
+
+  /// If an error was encountered when writing to the internal [`fmt::Write`], this will retrieve it.
+  pub const fn take_err(&mut self) -> Option<fmt::Error> {
+    self.err.take()
+  }
+}
+
+impl<W: fmt::Write> Sink for WriteSink<W> {
+  fn write_char(&mut self, c: char) {
+    if let Err(err) = self.writer.write_char(c) {
+      self.err.replace(err);
+    };
+  }
+
+  fn write_str(&mut self, s: &str) {
+    if let Err(err) = self.writer.write_str(s) {
+      self.err.replace(err);
+    };
+  }
+
+  fn write_fmt(&mut self, args: fmt::Arguments<'_>) {
+    if let Err(err) = self.writer.write_fmt(args) {
+      self.err.replace(err);
+    };
+  }
+}
+
+/// Writes a [`Printable`] into a [`fmt::Write`].
+pub fn fmt_write_printable<W, T>(writer: &mut W, printable: &T) -> fmt::Result
+where W: fmt::Write + ?Sized, T: Printable + ?Sized {
+  fmt_write_as_sink(writer, |sink| printable.print(sink))
+}
+
+/// Allows a [`fmt::Write`] to be used like a [`Sink`].
+pub fn fmt_write_as_sink<W, F>(writer: &mut W, f: F) -> fmt::Result
+where W: fmt::Write + ?Sized, F: FnOnce(&mut WriteSink<&mut W>) {
+  let mut sink = WriteSink::new(writer);
+  f(&mut sink);
+  match sink.take_err() {
+    Some(err) => Err(err),
+    None => Ok(())
+  }
+}
+
 
 
 /// What should be written when indenting.
