@@ -1,15 +1,8 @@
 //! Internals relating to [`Formattable`] and [`Formatter`].
 
-use crate::sink::{
-  Printable,
-  PrintableKnownLen,
-  Indent,
-  Newline,
-  Repeat,
-  Sink
-};
+use crate::primitive::*;
 
-use bytemuck::TransparentWrapper;
+use std::fmt;
 
 
 
@@ -80,7 +73,7 @@ impl Cursor {
 /// which specifies what layout mode should be used for the given item in the given scenario.
 ///
 /// Most methods on [`Formattable`] pass in a [`Formatter`] which is akin to [`fmt::Formatter`][std::fmt::Formatter],
-/// but implements [`Sink`] rather than [`fmt::Write`][std::fmt::Write] (see [`Sink`] for more information).
+/// and implements [`fmt::Write`], with a few caveats.
 ///
 /// ## Usage
 /// - If you are implementing this trait yourself, you only need to implement the
@@ -97,24 +90,24 @@ pub trait Formattable<State: Clone>: Sized {
   type Layout;
 
   /// Picks an appropriate layout mode to format the current item with, given the current state.
-  fn pick_layout(&self, cursor: Cursor, state: State) -> Self::Layout;
+  fn pick_layout(&self, cursor: Cursor, state: State) -> Result<Self::Layout, fmt::Error>;
 
-  /// Writes the given value into the sink with the given layout mode.
-  fn format(&self, formatter: &mut (impl Formatter + ?Sized), layout: Self::Layout, state: State);
+  /// Writes the given value into the formatter with the given layout mode.
+  fn format(&self, formatter: &mut (impl Formatter + ?Sized), layout: Self::Layout, state: State) -> fmt::Result;
 
   /// Performs a formatting job, producing its output, given a [`Plumbing`].
-  fn format_to<P>(&self, cursor: Cursor, layout: Self::Layout, state: State) -> P::Output
+  fn format_to<P>(&self, cursor: Cursor, layout: Self::Layout, state: State) -> Result<P::Output, fmt::Error>
   where P: Plumbing + Default {
     let mut formatter = GenericFormatter::<P>::new(cursor);
-    self.format(&mut formatter, layout, state);
-    formatter.into_output()
+    self.format(&mut formatter, layout, state)?;
+    Ok(formatter.into_output())
   }
 
   /// Writes the given value into a string buffer with the given layout mode.
   ///
   /// This function is equivalent to `self.format_to::<StringPlumbing>(cursor, layout, state)`.
   #[inline]
-  fn format_to_string(&self, cursor: Cursor, layout: Self::Layout, state: State) -> String {
+  fn format_to_string(&self, cursor: Cursor, layout: Self::Layout, state: State) -> Result<String, fmt::Error> {
     self.format_to::<StringPlumbing>(cursor, layout, state)
   }
 
@@ -124,7 +117,7 @@ pub trait Formattable<State: Clone>: Sized {
   ///
   /// This function is equivalent to `self.format_to::<PreviewPlumbing>(cursor, layout, state)`.
   #[inline]
-  fn format_to_preview(&self, cursor: Cursor, layout: Self::Layout, state: State) -> Preview {
+  fn format_to_preview(&self, cursor: Cursor, layout: Self::Layout, state: State) -> Result<Preview, fmt::Error> {
     self.format_to::<PreviewPlumbing>(cursor, layout, state)
   }
 
@@ -132,24 +125,24 @@ pub trait Formattable<State: Clone>: Sized {
   ///
   /// This function is equivalent to `self.format(formatter, self.pick_layout(formatter.cursor(), state.clone()), state)`.
   #[inline]
-  fn format_auto(&self, formatter: &mut (impl Formatter + ?Sized), state: State) {
-    self.format(formatter, self.pick_layout(formatter.cursor(), state.clone()), state);
+  fn format_auto(&self, formatter: &mut (impl Formatter + ?Sized), state: State) -> fmt::Result {
+    self.format(formatter, self.pick_layout(formatter.cursor(), state.clone())?, state)
   }
 
   /// Performs a formatting job, producing its output, given a [`Plumbing`], picking layout modes automatically.
   ///
   /// This function is equivalent to `self.format_to::<P>(cursor, self.pick_layout(cursor, state.clone()), state)`.
   #[inline]
-  fn format_to_auto<P>(&self, cursor: Cursor, state: State) -> P::Output
+  fn format_to_auto<P>(&self, cursor: Cursor, state: State) -> Result<P::Output, fmt::Error>
   where P: Plumbing + Default {
-    self.format_to::<P>(cursor, self.pick_layout(cursor, state.clone()), state)
+    self.format_to::<P>(cursor, self.pick_layout(cursor, state.clone())?, state)
   }
 
   /// Writes the given value into a string buffer, picking layout modes automatically.
   ///
   /// This function is equivalent to `self.format_to_auto::<StringPlumbing>(cursor, state)`.
   #[inline]
-  fn format_to_string_auto(&self, cursor: Cursor, state: State) -> String {
+  fn format_to_string_auto(&self, cursor: Cursor, state: State) -> Result<String, fmt::Error> {
     self.format_to_auto::<StringPlumbing>(cursor, state)
   }
 
@@ -157,7 +150,7 @@ pub trait Formattable<State: Clone>: Sized {
   ///
   /// This function is equivalent to `self.format_to_auto::<PreviewPlumbing>(cursor, state)`.
   #[inline]
-  fn format_to_preview_auto(&self, cursor: Cursor, state: State) -> Preview {
+  fn format_to_preview_auto(&self, cursor: Cursor, state: State) -> Result<Preview, fmt::Error> {
     self.format_to_auto::<PreviewPlumbing>(cursor, state)
   }
 }
@@ -167,41 +160,41 @@ macro_rules! impl_formattable_delegate {
     impl<$T: Formattable<State> + ?Sized, State: Clone> Formattable<State> for $Type {
       type Layout = $T::Layout;
 
-      fn pick_layout(&self, cursor: Cursor, state: State) -> Self::Layout {
+      fn pick_layout(&self, cursor: Cursor, state: State) -> Result<Self::Layout, fmt::Error> {
         $T::pick_layout(self, cursor, state)
       }
 
-      fn format(&self, formatter: &mut (impl Formatter + ?Sized), layout: Self::Layout, state: State) {
-        $T::format(self, formatter, layout, state);
+      fn format(&self, formatter: &mut (impl Formatter + ?Sized), layout: Self::Layout, state: State) -> fmt::Result {
+        $T::format(self, formatter, layout, state)
       }
 
-      fn format_to<P>(&self, cursor: Cursor, layout: Self::Layout, state: State) -> P::Output
+      fn format_to<P>(&self, cursor: Cursor, layout: Self::Layout, state: State) -> Result<P::Output, fmt::Error>
       where P: Plumbing + Default {
         $T::format_to::<P>(self, cursor, layout, state)
       }
 
-      fn format_to_string(&self, cursor: Cursor, layout: Self::Layout, state: State) -> String {
+      fn format_to_string(&self, cursor: Cursor, layout: Self::Layout, state: State) -> Result<String, fmt::Error> {
         $T::format_to_string(self, cursor, layout, state)
       }
 
-      fn format_to_preview(&self, cursor: Cursor, layout: Self::Layout, state: State) -> Preview {
+      fn format_to_preview(&self, cursor: Cursor, layout: Self::Layout, state: State) -> Result<Preview, fmt::Error> {
         $T::format_to_preview(self, cursor, layout, state)
       }
 
-      fn format_auto(&self, formatter: &mut (impl Formatter + ?Sized), state: State) {
-        $T::format_auto(self, formatter, state);
+      fn format_auto(&self, formatter: &mut (impl Formatter + ?Sized), state: State) -> fmt::Result {
+        $T::format_auto(self, formatter, state)
       }
 
-      fn format_to_auto<P>(&self, cursor: Cursor, state: State) -> P::Output
+      fn format_to_auto<P>(&self, cursor: Cursor, state: State) -> Result<P::Output, fmt::Error>
       where P: Plumbing + Default {
         $T::format_to_auto::<P>(self, cursor, state)
       }
 
-      fn format_to_string_auto(&self, cursor: Cursor, state: State) -> String {
+      fn format_to_string_auto(&self, cursor: Cursor, state: State) -> Result<String, fmt::Error> {
         $T::format_to_string_auto(self, cursor, state)
       }
 
-      fn format_to_preview_auto(&self, cursor: Cursor, state: State) -> Preview {
+      fn format_to_preview_auto(&self, cursor: Cursor, state: State) -> Result<Preview, fmt::Error> {
         $T::format_to_preview_auto(self, cursor, state)
       }
     }
@@ -214,33 +207,17 @@ impl_formattable_delegate!(T for Box<T>);
 impl_formattable_delegate!(T for std::rc::Rc<T>);
 impl_formattable_delegate!(T for std::sync::Arc<T>);
 
-/// If you want to implement [`Formattable`] for a type that implements [`Printable`] for whatever reason,
-/// you can use this macro to implement it easily.
-#[macro_export]
-macro_rules! impl_formattable_from_printable {
-  ($Type:ty) => (
-    impl<State: Clone> $crate::format::Formattable<State> for $Type {
-      $crate::formattable_unit_layout!(State);
-
-      fn format(&self, formatter: &mut (impl $crate::format::Formatter + ?Sized), _: (), _: State) {
-        <$Type as $crate::sink::Printable>::print(self, formatter)
-      }
-    }
-  );
-}
-
 /// Expands to all of the items necessary to specify a 'unit layout' (one possible layout) in a [`Formattable`] implementation.
 ///
 /// # Example
 /// ```rust
-/// # use shapeshifter::format::*;
-/// # use shapeshifter::sink::*;
+/// # use shapeshifter::*;
 /// struct MyStruct;
 ///
 /// impl<State: Clone> Formattable<State> for MyStruct {
 ///   shapeshifter::formattable_unit_layout!(State);
 ///
-///   fn format(&self, formatter: &mut impl Formatter, layout: (), state: State) {
+///   fn format(&self, formatter: &mut (impl Formatter + ?Sized), layout: (), state: State) {
 ///     todo!();
 ///   }
 /// }
@@ -257,16 +234,13 @@ macro_rules! formattable_unit_layout {
 
 
 
-/// An extension of the [`Sink`] trait that contains extra state for adaptive formatting within a [`Formattable`] implementation.
-///
-/// The [`Formatter`] trait is akin to [`fmt::Formatter`][std::fmt::Formatter], but it is a subtrait
-/// of [`Sink`] rather than implementing [`fmt::Write`][std::fmt::Write] (see [`Sink`] for more information).
+/// An extension of the [`fmt::Write`] trait that contains extra state for adaptive formatting within a [`Formattable`] implementation.
 ///
 /// If you are using the default [`Formatter`], [`GenericFormatter`] (you probably are), it performs the following input transformation:
 /// - When the tab (`\t`) character is written, the configured [`Indent`] described by the current [`Cursor`] is written instead.
 /// - When the newline (`\n`) character is written, the configured [`Newline`] described by the current [`Cursor`] is written instead,
 ///   and the appropriate number of [`Indent`]s are added to return to the current indent level.
-pub trait Formatter: Sink {
+pub trait Formatter: fmt::Write {
   /// Gets the [`Cursor`] belonging to this [`Formatter`].
   fn cursor(&self) -> Cursor;
 
@@ -274,52 +248,59 @@ pub trait Formatter: Sink {
   fn cursor_mut(&mut self) -> &mut Cursor;
 
   /// Convenience function that increments the indent counter before executing the given function, and decrements it afterwards.
-  fn indent(&mut self, f: impl FnOnce(&mut Self)) {
+  fn indent(&mut self, f: impl FnOnce(&mut Self) -> fmt::Result) -> fmt::Result {
     self.cursor_mut().increment_indent();
-    f(self);
+    f(self)?;
     self.cursor_mut().decrement_indent();
+    Ok(())
   }
 
-  /// Convenience function that allows printing a value delimited on either side by [`Printable`] items.
+  /// Convenience function that allows printing a value delimited on either side by [`fmt::Display`] items.
   fn delimit(
     &mut self,
-    start: impl Printable,
-    end: impl Printable,
-    f: impl FnOnce(&mut Self)
-  ) {
-    start.print(self);
-    f(self);
-    end.print(self);
+    start: impl fmt::Display,
+    end: impl fmt::Display,
+    f: impl FnOnce(&mut Self) -> fmt::Result
+  ) -> fmt::Result {
+    self.write_display(&start)?;
+    f(self)?;
+    self.write_display(&end)?;
+    Ok(())
   }
 
-  /// Convenience function that prints a series of values separated by a [`Printable`] item.
+  /// Convenience function that prints a series of values separated by a [`fmt::Display`] item.
   fn separate<I>(
     &mut self,
-    separator: impl Printable,
+    separator: impl fmt::Display,
     include_trailing: bool,
     values: I,
-    f: impl FnMut(&mut Self, <I as IntoIterator>::Item)
-  ) where I: IntoIterator {
+    f: impl FnMut(&mut Self, <I as IntoIterator>::Item) -> fmt::Result
+  ) -> fmt::Result where I: IntoIterator {
     let trailing_separator = if include_trailing { Some(&separator) } else { None };
-    self.separate_alt(&separator, trailing_separator, values, f);
+    self.separate_alt(&separator, trailing_separator, values, f)
   }
 
-  /// Convenience function that prints a series of values separated by a [`Printable`] item.
+  /// Convenience function that prints a series of values separated by a [`fmt::Display`] item.
   fn separate_alt<I>(
     &mut self,
-    separator: impl Printable,
-    trailing_separator: Option<impl Printable>,
+    separator: impl fmt::Display,
+    trailing_separator: Option<impl fmt::Display>,
     values: I,
-    mut f: impl FnMut(&mut Self, <I as IntoIterator>::Item)
-  ) where I: IntoIterator {
+    mut f: impl FnMut(&mut Self, <I as IntoIterator>::Item) -> fmt::Result
+  ) -> fmt::Result where I: IntoIterator {
     for (i, value) in values.into_iter().enumerate() {
-      if i != 0 { separator.print(self); };
-      f(self, value);
+      if i != 0 {
+        self.write_display(&separator)?;
+      };
+
+      f(self, value)?;
     };
 
     if let Some(trailing_separator) = trailing_separator {
-      trailing_separator.print(self);
+      self.write_display(&trailing_separator)?;
     };
+
+    Ok(())
   }
 }
 
@@ -340,19 +321,6 @@ macro_rules! impl_formatter_delegate {
 }
 
 impl_formatter_delegate!(T for &mut T);
-impl_formatter_delegate!(T for Box<T>);
-
-
-
-/// A wrapper type that allows input to be passed to a [`Formatter`] without input transformation.
-///
-/// Currently, [`RawMode`] is only supported by [`GenericFormatter`]
-/// (or any other [`Formatter`] `F` that implements `Sink for RawMode<F>`).
-#[repr(transparent)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub struct RawMode<F: ?Sized>(F);
-
-unsafe impl<F: ?Sized> TransparentWrapper<F> for RawMode<F> {}
 
 
 
@@ -407,9 +375,16 @@ impl<P: Plumbing> Formatter for GenericFormatter<P> {
   }
 }
 
-impl<P: Plumbing> Sink for GenericFormatter<P> {
-  fn write_char(&mut self, c: char) {
-    self.plumbing.accept_char(&mut self.cursor, c);
+impl<P: Plumbing> fmt::Write for GenericFormatter<P> {
+  fn write_str(&mut self, s: &str) -> fmt::Result {
+    for c in s.chars() {
+      self.write_char(c)?;
+    };
+    Ok(())
+  }
+
+  fn write_char(&mut self, c: char) -> fmt::Result {
+    self.plumbing.accept_char(&mut self.cursor, c)
   }
 }
 
@@ -446,12 +421,12 @@ impl Plumbing for StringPlumbing {
     self.into_string()
   }
 
-  fn accept_raw(&mut self, printable: impl PrintableKnownLen) {
-    printable.print(&mut self.string);
+  fn accept_raw(&mut self, printable: impl fmt::Display) -> fmt::Result {
+    self.string.write_display(&printable)
   }
 
-  fn accept_newline(&mut self, newline: Newline) {
-    newline.print(&mut self.string);
+  fn accept_newline(&mut self, newline: Newline) -> fmt::Result {
+    self.string.write_display(&newline)
   }
 }
 
@@ -508,18 +483,21 @@ impl Plumbing for PreviewPlumbing {
     self.into_preview()
   }
 
-  fn accept_raw(&mut self, printable: impl PrintableKnownLen) {
-    let len = printable.print_len();
+  fn accept_raw(&mut self, display: impl fmt::Display) -> fmt::Result {
+    let len = display.fmt_len()?;
     self.len += len;
     self.current_column += len;
+    Ok(())
   }
 
-  fn accept_newline(&mut self, newline: Newline) {
+  fn accept_newline(&mut self, newline: Newline) -> fmt::Result {
+    let newline_len = crate::primitive::fmt_display_len(&newline)?;
     let column = std::mem::take(&mut self.current_column);
-    self.len += newline.print_len();
+    self.len += newline_len;
     self.vertical_span += 1;
     self.horizontal_span = usize::max(self.horizontal_span, column);
     self.current_column = 0;
+    Ok(())
   }
 }
 
@@ -535,36 +513,40 @@ pub trait Plumbing {
   /// Convert this [`Plumbing`] into its output type.
   fn into_output(self) -> Self::Output;
 
-  /// Accepts some input (in the form of a [`PrintableKnownLen`]) without transforming it.
-  fn accept_raw(&mut self, printable: impl PrintableKnownLen);
+  /// Accepts some input (in the form of a [`fmt::Display`]) without transforming it.
+  fn accept_raw(&mut self, printable: impl fmt::Display) -> fmt::Result;
 
   /// Accepts a single newline.
-  fn accept_newline(&mut self, newline: Newline);
+  fn accept_newline(&mut self, newline: Newline) -> fmt::Result;
 
   /// Accepts a pending indent, if possible. (See [Cursor::pending_indent])
   ///
   /// This function should be called before writing anything.
-  fn accept_pending_indent(&mut self, cursor: &mut Cursor) {
+  fn accept_pending_indent(&mut self, cursor: &mut Cursor) -> fmt::Result {
     if std::mem::take(&mut cursor.pending_indent) {
-      self.accept_raw(Repeat::new(cursor.indent, cursor.indent_level));
-    }
+      self.accept_raw(Repeat::new(cursor.indent, cursor.indent_level))?;
+    };
+
+    Ok(())
   }
 
   /// Accepts a single character, performing input transformation.
-  fn accept_char(&mut self, cursor: &mut Cursor, c: char) {
+  fn accept_char(&mut self, cursor: &mut Cursor, c: char) -> fmt::Result {
     match c {
       '\n' => {
-        self.accept_newline(cursor.newline);
+        self.accept_newline(cursor.newline)?;
         cursor.pending_indent = true;
       },
       '\t' => {
-        self.accept_pending_indent(cursor);
-        self.accept_raw(cursor.indent);
+        self.accept_pending_indent(cursor)?;
+        self.accept_raw(cursor.indent)?;
       },
       c => {
-        self.accept_pending_indent(cursor);
-        self.accept_raw(c);
+        self.accept_pending_indent(cursor)?;
+        self.accept_raw(c)?;
       }
     };
+
+    Ok(())
   }
 }

@@ -1,4 +1,6 @@
-use shapeshifter::{Cursor, Formattable, Formatter, Indent, Newline};
+use shapeshifter::*;
+
+use std::fmt;
 
 const SETTINGS: Cursor = Cursor::new(Indent::SPACES2, Newline::LF);
 
@@ -12,7 +14,7 @@ const ARGS: FormatArgs = FormatArgs {
 };
 
 fn main() {
-  let out = NODE.format_to_string_auto(SETTINGS, ARGS);
+  let out = NODE.format_to_string_auto(SETTINGS, ARGS).unwrap();
 
   println!("{}", "-".repeat(ARGS.max_width));
   println!("{out}");
@@ -24,35 +26,46 @@ fn main() {
 impl Formattable<FormatArgs> for Node {
   type Layout = NodeLayout;
 
-  fn format(&self, sink: &mut (impl Formatter + ?Sized), mode: NodeLayout, args: FormatArgs) {
-    sink.write_str(self.name);
+  fn format(&self, sink: &mut (impl Formatter + ?Sized), mode: NodeLayout, args: FormatArgs) -> fmt::Result {
+    sink.write_str(self.name)?;
     if !self.children.is_empty() {
       sink.delimit(" {", "}", |sink| {
         match mode {
           NodeLayout::Tall => sink.indent(|sink| {
             sink.separate(",", args.trailing_commas_in_tall, self.children, |sink, node| {
-              sink.write_char('\n');
-              node.format_auto(sink, args);
-            });
-            sink.write_char('\n');
-          }),
+              sink.write_nl()?;
+              node.format_auto(sink, args)?;
+
+              Ok(())
+            })?;
+            sink.write_nl()?;
+
+            Ok(())
+          })?,
           NodeLayout::Compressed => {
             sink.separate(",", args.trailing_commas_in_tall, self.children, |sink, node| {
-              sink.write_char(' ');
-              node.format_auto(sink, args);
-            });
-            sink.write_char(' ');
+              sink.write_char(' ')?;
+              node.format_auto(sink, args)?;
+
+              Ok(())
+            })?;
+            sink.write_char(' ')?;
           }
         };
-      });
+
+        Ok(())
+      })?;
     };
+
+    Ok(())
   }
 
-  fn pick_layout(&self, cursor: Cursor, args: FormatArgs) -> NodeLayout {
-    let use_compressed = self.children.len() <= args.max_children_inline &&
-      (args.allow_inlined_grandchildren || !self.has_grandchild()) &&
-      self.format_to_preview(cursor, NodeLayout::Compressed, args).horizontal_span <= args.max_width;
-    if use_compressed { NodeLayout::Compressed } else { NodeLayout::Tall }
+  fn pick_layout(&self, cursor: Cursor, args: FormatArgs) -> Result<NodeLayout, fmt::Error> {
+    let use_compressed = self.children.len() <= args.max_children_inline
+      && (args.allow_inlined_grandchildren || !self.has_grandchild())
+      && self.format_to_preview(cursor, NodeLayout::Compressed, args)?.horizontal_span <= args.max_width;
+    let layout = if use_compressed { NodeLayout::Compressed } else { NodeLayout::Tall };
+    Ok(layout)
   }
 }
 

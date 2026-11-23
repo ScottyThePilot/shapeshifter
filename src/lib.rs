@@ -18,10 +18,8 @@
   unreachable_pub
 )]
 
-pub mod format;
-pub mod sink;
+mod format;
+mod primitive;
 
-#[doc(inline)]
-pub use crate::format::{Cursor, Formattable, Formatter};
-#[doc(inline)]
-pub use crate::sink::{Printable, PrintableKnownLen, Sink, Indent, Newline};
+pub use crate::format::*;
+pub use crate::primitive::*;
