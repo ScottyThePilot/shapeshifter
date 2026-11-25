@@ -212,12 +212,13 @@ impl_formattable_delegate!(T for std::sync::Arc<T>);
 /// # Example
 /// ```rust
 /// # use shapeshifter::*;
+/// # use std::fmt;
 /// struct MyStruct;
 ///
 /// impl<State: Clone> Formattable<State> for MyStruct {
 ///   shapeshifter::formattable_unit_layout!(State);
 ///
-///   fn format(&self, formatter: &mut (impl Formatter + ?Sized), layout: (), state: State) {
+///   fn format(&self, formatter: &mut (impl Formatter + ?Sized), layout: (), state: State) -> std::fmt::Result {
 ///     todo!();
 ///   }
 /// }
@@ -228,7 +229,7 @@ macro_rules! formattable_unit_layout {
     type Layout = ();
 
     #[inline]
-    fn pick_layout(&self, _: $crate::format::Cursor, _: $State) -> () { () }
+    fn pick_layout(&self, _: $crate::Cursor, _: $State) -> std::fmt::Result { Ok(()) }
   );
 }
 
