@@ -2,7 +2,7 @@ use shapeshifter::*;
 
 use std::fmt;
 
-const SETTINGS: Cursor = Cursor::new(Indent::SPACES2, Newline::LF);
+const SETTINGS: Config = Config::new(Indent::SPACES2, Newline::LF);
 
 // You can tweak the formatting arguments here to see how they affect the produced output.
 const ARGS: FormatArgs = FormatArgs {
@@ -26,30 +26,30 @@ fn main() {
 impl Formattable<FormatArgs> for Node {
   type Layout = NodeLayout;
 
-  fn format(&self, sink: &mut (impl Formatter + ?Sized), mode: NodeLayout, args: FormatArgs) -> fmt::Result {
-    sink.write_str(self.name)?;
+  fn format(&self, formatter: &mut impl Formatter, mode: NodeLayout, args: FormatArgs) -> fmt::Result {
+    formatter.write_str(self.name)?;
     if !self.children.is_empty() {
-      sink.delimit(" {", "}", |sink| {
+      formatter.delimit(" {", "}", |formatter| {
         match mode {
-          NodeLayout::Tall => sink.indent(|sink| {
-            sink.separate(",", args.trailing_commas_in_tall, self.children, |sink, node| {
-              sink.write_nl()?;
-              node.format_auto(sink, args)?;
+          NodeLayout::Tall => formatter.indent(|formatter| {
+            formatter.separate(",", args.trailing_commas_in_tall, self.children, |formatter, node| {
+              formatter.write_nl()?;
+              node.format_auto(formatter, args)?;
 
               Ok(())
             })?;
-            sink.write_nl()?;
+            formatter.write_nl()?;
 
             Ok(())
           })?,
           NodeLayout::Compressed => {
-            sink.separate(",", args.trailing_commas_in_tall, self.children, |sink, node| {
-              sink.write_char(' ')?;
-              node.format_auto(sink, args)?;
+            formatter.separate(",", args.trailing_commas_in_tall, self.children, |formatter, node| {
+              formatter.write_char(' ')?;
+              node.format_auto(formatter, args)?;
 
               Ok(())
             })?;
-            sink.write_char(' ')?;
+            formatter.write_char(' ')?;
           }
         };
 
@@ -60,10 +60,10 @@ impl Formattable<FormatArgs> for Node {
     Ok(())
   }
 
-  fn pick_layout(&self, cursor: Cursor, args: FormatArgs) -> Result<NodeLayout, fmt::Error> {
+  fn pick_layout(&self, formatter: &impl Formatter, args: FormatArgs) -> Result<NodeLayout, fmt::Error> {
     let use_compressed = self.children.len() <= args.max_children_inline
       && (args.allow_inlined_grandchildren || !self.has_grandchild())
-      && self.format_to_preview(cursor, NodeLayout::Compressed, args)?.horizontal_span <= args.max_width;
+      && self.format_to_preview_forked(formatter, NodeLayout::Compressed, args)?.spanned_width <= args.max_width;
     let layout = if use_compressed { NodeLayout::Compressed } else { NodeLayout::Tall };
     Ok(layout)
   }
@@ -114,6 +114,12 @@ impl Node {
 }
 
 const NODE: Node = Node::new("root_node", &[
+  Node::new("width_tester ======================================================", &[
+    Node::new_empty("value")
+  ]),
+  Node::new("width_tester =======================================================", &[
+    Node::new_empty("value")
+  ]),
   Node::new("foo1", &[
     Node::new_empty("foo1.brad"),
     Node::new_empty("foo1.charles"),

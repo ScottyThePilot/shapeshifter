@@ -8,25 +8,39 @@ use std::fmt;
 
 /// Extensions to [`fmt::Display`].
 pub trait DisplayExt: fmt::Display {
-  /// The length of this value, when printed via [`fmt::Display`].
-  fn fmt_len(&self) -> Result<usize, fmt::Error>;
+  /// The length of this value, in chars, when printed via [`fmt::Display`].
+  fn fmt_chars_len(&self) -> Result<usize, fmt::Error>;
+
+  /// The length of this value, in bytes, when printed via [`fmt::Display`].
+  fn fmt_bytes_len(&self) -> Result<usize, fmt::Error>;
 }
 
 impl<T> DisplayExt for T where T: fmt::Display + ?Sized {
-  fn fmt_len(&self) -> Result<usize, fmt::Error> {
-    fmt_display_len(self)
+  fn fmt_chars_len(&self) -> Result<usize, fmt::Error> {
+    fmt_display_chars_len(self)
+  }
+
+  fn fmt_bytes_len(&self) -> Result<usize, fmt::Error> {
+    fmt_display_bytes_len(self)
   }
 }
 
 /// Extensions to [`fmt::Debug`].
 pub trait DebugExt: fmt::Debug {
-  /// The length of this value, when printed via [`fmt::Debug`].
-  fn fmt_len(&self) -> Result<usize, fmt::Error>;
+  /// The length of this value, in chars, when printed via [`fmt::Debug`].
+  fn fmt_chars_len(&self) -> Result<usize, fmt::Error>;
+
+  /// The length of this value, in bytes, when printed via [`fmt::Debug`].
+  fn fmt_bytes_len(&self) -> Result<usize, fmt::Error>;
 }
 
 impl<T> DebugExt for T where T: fmt::Debug + ?Sized {
-  fn fmt_len(&self) -> Result<usize, fmt::Error> {
-    fmt_debug_len(self)
+  fn fmt_chars_len(&self) -> Result<usize, fmt::Error> {
+    fmt_debug_chars_len(self)
+  }
+
+  fn fmt_bytes_len(&self) -> Result<usize, fmt::Error> {
+    fmt_debug_bytes_len(self)
   }
 }
 
@@ -65,50 +79,6 @@ impl<T> WriteExt for T where T: fmt::Write + ?Sized {
 
 
 
-/// What should be written when indenting.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Indent {
-  /// Writes the given [`str`] directly.
-  String(&'static str),
-  /// Writes the given [`char`] the given number of times.
-  Repeat(Repeat<char>)
-}
-
-impl Indent {
-  /// The tab character (`'\t'`).
-  pub const TABS: Self = Indent::String("\t");
-  /// Two spaces per indent.
-  pub const SPACES2: Self = Indent::spaces(2);
-  /// Four spaces per indent.
-  pub const SPACES4: Self = Indent::spaces(4);
-  /// Eight spaces per indent.
-  pub const SPACES8: Self = Indent::spaces(8);
-
-  /// Create an `Indent` with an arbitrary number of spaces.
-  pub const fn spaces(num: usize) -> Self {
-    Indent::Repeat(Repeat::new(' ', num))
-  }
-
-  /// The byte length of this indent.
-  pub const fn len(self) -> usize {
-    match self {
-      Self::String(s) => s.len(),
-      Self::Repeat(r) => r.len()
-    }
-  }
-}
-
-impl fmt::Display for Indent {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    match *self {
-      Self::String(s) => fmt::Write::write_str(f, s),
-      Self::Repeat(r) => fmt::Display::fmt(&r, f)
-    }
-  }
-}
-
-
-
 /// What should be written to the sink whenever a newline is encountered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub enum Newline {
@@ -127,6 +97,14 @@ impl Newline {
       Self::CRLF => "\r\n"
     }
   }
+
+  /// The length of this newline, in chars.
+  pub const fn chars_len(self) -> usize {
+    match self {
+      Self::LF => 1,
+      Self::CRLF => 2
+    }
+  }
 }
 
 impl AsRef<str> for Newline {
@@ -142,7 +120,19 @@ impl fmt::Display for Newline {
   }
 }
 
+impl IntoIterator for Newline {
+  type Item = char;
+  type IntoIter = std::str::Chars<'static>;
 
+  fn into_iter(self) -> Self::IntoIter {
+    self.to_str().chars()
+  }
+}
+
+
+
+/// What should be written when indenting.
+pub type Indent = Repeat<char>;
 
 /// Repeats the given value N times.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -161,16 +151,25 @@ impl<P> Repeat<P> {
 }
 
 impl Repeat<char> {
-  /// The length of the value when stringified.
-  pub const fn len(self) -> usize {
-    self.value.len_utf8() * self.count
+  /// The tab character (`'\t'`).
+  pub const TABS: Self = Repeat::new('\t', 1);
+  /// Two spaces.
+  pub const SPACES2: Self = Repeat::new(' ', 2);
+  /// Four spaces.
+  pub const SPACES4: Self = Repeat::new(' ', 4);
+  /// Eight spaces.
+  pub const SPACES8: Self = Repeat::new(' ', 8);
+
+  /// The length of this [`Repeat<char>`], in chars.
+  pub const fn chars_len(self) -> usize {
+    self.count
   }
 }
 
-impl Repeat<&str> {
-  /// The length of the value when stringified.
-  pub const fn len(self) -> usize {
-    self.value.len() * self.count
+impl Repeat<Repeat<char>> {
+  /// The length of this [`Repeat<Repeat<char>>`], in chars.
+  pub const fn chars_len(self) -> usize {
+    self.value.count * self.count
   }
 }
 
@@ -184,21 +183,54 @@ impl<P: fmt::Display> fmt::Display for Repeat<P> {
   }
 }
 
+impl IntoIterator for Repeat<char> {
+  type Item = char;
+  type IntoIter = std::iter::RepeatN<char>;
 
-
-/// Measures the length of `T` when formatted with its [`fmt::Debug`] implementation.
-pub fn fmt_debug_len<T: fmt::Debug + ?Sized>(value: &T) -> Result<usize, fmt::Error> {
-  fmt_args_len(format_args!("{value:?}"))
+  fn into_iter(self) -> Self::IntoIter {
+    std::iter::repeat_n(self.value, self.chars_len())
+  }
 }
 
-/// Measures the length of `T` when formatted with its [`fmt::Display`] implementation.
-pub fn fmt_display_len<T: fmt::Display + ?Sized>(value: &T) -> Result<usize, fmt::Error> {
-  fmt_args_len(format_args!("{value}"))
+impl IntoIterator for Repeat<Repeat<char>> {
+  type Item = char;
+  type IntoIter = std::iter::RepeatN<char>;
+
+  fn into_iter(self) -> Self::IntoIter {
+    std::iter::repeat_n(self.value.value, self.chars_len())
+  }
 }
 
-/// Measures the length of a [`fmt::Arguments`] when formatted.
-pub fn fmt_args_len(args: fmt::Arguments<'_>) -> Result<usize, fmt::Error> {
-  let mut counter = Counter(0);
+
+
+#[derive(Debug)]
+struct CharsCounter(usize);
+
+impl fmt::Write for CharsCounter {
+  fn write_char(&mut self, _: char) -> fmt::Result {
+    self.0 += 1;
+    Ok(())
+  }
+
+  fn write_str(&mut self, s: &str) -> fmt::Result {
+    self.0 += s.chars().count();
+    Ok(())
+  }
+}
+
+/// Measures the length of `T`, in chars, when formatted with its [`fmt::Debug`] implementation.
+pub fn fmt_debug_chars_len<T: fmt::Debug + ?Sized>(value: &T) -> Result<usize, fmt::Error> {
+  fmt_args_chars_len(format_args!("{value:?}"))
+}
+
+/// Measures the length of `T`, in chars, when formatted with its [`fmt::Display`] implementation.
+pub fn fmt_display_chars_len<T: fmt::Display + ?Sized>(value: &T) -> Result<usize, fmt::Error> {
+  fmt_args_chars_len(format_args!("{value}"))
+}
+
+/// Measures the length of a [`fmt::Arguments`], in chars, when formatted.
+pub fn fmt_args_chars_len(args: fmt::Arguments<'_>) -> Result<usize, fmt::Error> {
+  let mut counter = CharsCounter(0);
   fmt::Write::write_fmt(&mut counter, args)?;
   Ok(counter.0)
 }
@@ -206,9 +238,9 @@ pub fn fmt_args_len(args: fmt::Arguments<'_>) -> Result<usize, fmt::Error> {
 
 
 #[derive(Debug)]
-struct Counter(usize);
+struct BytesCounter(usize);
 
-impl fmt::Write for Counter {
+impl fmt::Write for BytesCounter {
   fn write_char(&mut self, c: char) -> fmt::Result {
     self.0 += c.len_utf8();
     Ok(())
@@ -218,4 +250,21 @@ impl fmt::Write for Counter {
     self.0 += s.len();
     Ok(())
   }
+}
+
+/// Measures the length of `T`, in bytes, when formatted with its [`fmt::Debug`] implementation.
+pub fn fmt_debug_bytes_len<T: fmt::Debug + ?Sized>(value: &T) -> Result<usize, fmt::Error> {
+  fmt_args_bytes_len(format_args!("{value:?}"))
+}
+
+/// Measures the length of `T`, in bytes, when formatted with its [`fmt::Display`] implementation.
+pub fn fmt_display_bytes_len<T: fmt::Display + ?Sized>(value: &T) -> Result<usize, fmt::Error> {
+  fmt_args_bytes_len(format_args!("{value}"))
+}
+
+/// Measures the length of a [`fmt::Arguments`], in bytes, when formatted.
+pub fn fmt_args_bytes_len(args: fmt::Arguments<'_>) -> Result<usize, fmt::Error> {
+  let mut counter = BytesCounter(0);
+  fmt::Write::write_fmt(&mut counter, args)?;
+  Ok(counter.0)
 }
